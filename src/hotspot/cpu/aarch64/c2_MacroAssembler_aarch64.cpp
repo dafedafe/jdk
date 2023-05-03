@@ -484,16 +484,16 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
     cmp(cnt1, (u1)16); // small patterns still should be handled by simple algorithm
     br(LT, LINEAR_MEDIUM);
     mov(result, zr);
-    RuntimeAddress stub = nullptr;
+    RuntimeAddress stub = NULL;
     if (isL) {
       stub = RuntimeAddress(StubRoutines::aarch64::string_indexof_linear_ll());
-      assert(stub.target() != nullptr, "string_indexof_linear_ll stub has not been generated");
+      assert(stub.target() != NULL, "string_indexof_linear_ll stub has not been generated");
     } else if (str1_isL) {
       stub = RuntimeAddress(StubRoutines::aarch64::string_indexof_linear_ul());
-       assert(stub.target() != nullptr, "string_indexof_linear_ul stub has not been generated");
+       assert(stub.target() != NULL, "string_indexof_linear_ul stub has not been generated");
     } else {
       stub = RuntimeAddress(StubRoutines::aarch64::string_indexof_linear_uu());
-      assert(stub.target() != nullptr, "string_indexof_linear_uu stub has not been generated");
+      assert(stub.target() != NULL, "string_indexof_linear_uu stub has not been generated");
     }
     address call = trampoline_call(stub);
     if (call == nullptr) {
@@ -506,171 +506,221 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
 
   BIND(LINEARSEARCH);
   {
-    Label DO1, DO2, DO3;
+  Label DO1, DO2, DO3;
 
     Register str2tmp = tmp2;
-    Register first = tmp3;
+  Register first = tmp3;
 
-    if (icnt1 == -1)
-    {
-        Label DOSHORT, FIRST_LOOP, STR2_NEXT, STR1_LOOP, STR1_NEXT;
+  if (icnt1 == -1)
+  {
+      Label DOSHORT, FIRST_LOOP, STR2_NEXT, STR1_LOOP, STR1_NEXT, STR2_LAST,
+        STR1_NEXT_CHECK, STR1_LOOP_EXACT_NEXT, STR1_LOOP_NEXT, STR1_NEXT_LAST,
+        STR1_LOOP_EXACT_LAST, STR1_NEXT_LAST_CHECK;
 
-        cmp(cnt1, u1(str1_isL == str2_isL ? 4 : 2));
-        br(LT, DOSHORT);
+      sub(result_tmp, cnt2, cnt1);
+      cmp(cnt1, u1(str1_isL == str2_isL ? 4 : 2));
+      br(LT, DOSHORT);
       BIND(LINEAR_MEDIUM);
-        (this->*str1_load_1chr)(first, Address(str1));
-        lea(str1, Address(str1, cnt1, Address::lsl(str1_chr_shift)));
-        sub(cnt1_neg, zr, cnt1, LSL, str1_chr_shift);
-        lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
-        sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+      (this->*str1_load_1chr)(first, Address(str1));
 
-      BIND(FIRST_LOOP);
-        (this->*str2_load_1chr)(ch2, Address(str2, cnt2_neg));
-        cmp(first, ch2);
-        br(EQ, STR1_LOOP);
-      BIND(STR2_NEXT);
-        adds(cnt2_neg, cnt2_neg, str2_chr_size);
-        br(LE, FIRST_LOOP);
-        b(NOMATCH);
-
-      BIND(STR1_LOOP);
-        adds(cnt1tmp, cnt1_neg, str1_chr_size);
-        add(cnt2tmp, cnt2_neg, str2_chr_size);
-        br(GE, MATCH);
-
-      BIND(STR1_NEXT);
-        (this->*str1_load_1chr)(ch1, Address(str1, cnt1tmp));
-        (this->*str2_load_1chr)(ch2, Address(str2, cnt2tmp));
-        cmp(ch1, ch2);
-        br(NE, STR2_NEXT);
-        adds(cnt1tmp, cnt1tmp, str1_chr_size);
-        add(cnt2tmp, cnt2tmp, str2_chr_size);
-        br(LT, STR1_NEXT);
-        b(MATCH);
-
-      BIND(DOSHORT);
-      if (str1_isL == str2_isL) {
-        cmp(cnt1, (u1)2);
-        br(LT, DO1);
-        br(GT, DO3);
+      if (str2_isL) {
+        orr(first, first, first, LSL, 8);
       }
-    }
+      orr(first, first, first, LSL, 16);
+      orr(first, first, first, LSL, 32);
 
-    if (icnt1 == 4) {
-      Label CH1_LOOP;
+      lea(str1, Address(str1, cnt1, Address::lsl(str1_chr_shift)));
+      sub(cnt1_neg, zr, cnt1, LSL, str1_chr_shift);
+      lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
+      sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+      sub(cnt2_neg, cnt2_neg, 8); // Subtract to compensate first add
+    BIND(FIRST_LOOP); // Loop through haystack 8 bytes at a time
+      adds(cnt2_neg, cnt2_neg, 8);
+      br(GE, STR2_NEXT);
+      ldr(ch2, Address(str2, cnt2_neg));
+      eor(ch2, first, ch2);
+      sub(tmp5, ch2, str2_isL ? 0x0101010101010101 : 0x0001000100010001);
+      orr(tmp2, ch2, str2_isL ? 0x7f7f7f7f7f7f7f7f : 0x7fff7fff7fff7fff);
+      bics(tmp5, tmp5, tmp2);
+      br(NE, STR1_LOOP);
+      b(FIRST_LOOP);
+    BIND(STR2_NEXT); // Loop end reached
+      subs(cnt2_neg, cnt2_neg, 8);
+    BIND(STR2_LAST); // Read Last bytes
+      adds(cnt2_neg, cnt2_neg, str2_chr_size);
+      br(GE, NOMATCH);
+      (this->*str2_load_1chr)(ch2, Address(str2, cnt2_neg));
+      mov(cnt2tmp, cnt1_neg);
+      andr(tmp6, first, 0xFF);
+      cmp(tmp6, ch2);
+      br(EQ, STR1_LOOP_EXACT_LAST);
+      b(STR2_LAST);
+    BIND(STR1_LOOP_EXACT_NEXT); // Clear leftmost bit (there might be more)
+      mov(tmp2, 0x8000000000000000);
+      lsrv(tmp2, tmp2, tmp6);
+      bics(tmp5, tmp5, tmp2);
+      br(EQ, FIRST_LOOP);
+      b(STR1_LOOP_NEXT);
+    BIND(STR1_LOOP); // Reverse byte order
+      rev(tmp5, tmp5);
+      if (!str2_isL)
+        rev16(tmp5, tmp5);
+    BIND(STR1_LOOP_NEXT); // Find right byte
+      clz(tmp6, tmp5);
+      add(cnt2tmp, cnt2_neg, tmp6, LSR, 3);
+      mov(cnt1tmp, cnt1_neg);
+      b(STR1_NEXT_CHECK);
 
-        (this->*load_4chr)(ch1, str1);
-        sub(result_tmp, cnt2, 4);
-        lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
-        sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+    BIND(STR1_NEXT); // Match found, loop through both strings
+      (this->*str1_load_1chr)(ch1, Address(str1, cnt1tmp));
+      (this->*str2_load_1chr)(ch2, Address(str2, cnt2tmp));
+      cmp(ch1, ch2);
+      br(NE, STR1_LOOP_EXACT_NEXT);
+    BIND(STR1_NEXT_CHECK); // Next bytes
+      adds(cnt1tmp, cnt1tmp, str1_chr_size);
+      add(cnt2tmp, cnt2tmp, str2_chr_size);
+      br(LT, STR1_NEXT);
+      add(cnt2_neg, cnt2_neg, tmp6, LSR, 3);
+      b(MATCH);
 
-      BIND(CH1_LOOP);
-        (this->*load_4chr)(ch2, Address(str2, cnt2_neg));
-        cmp(ch1, ch2);
-        br(EQ, MATCH);
-        adds(cnt2_neg, cnt2_neg, str2_chr_size);
-        br(LE, CH1_LOOP);
-        b(NOMATCH);
-      }
+    BIND(STR1_LOOP_EXACT_LAST); // Match found in last bytes
+      mov(cnt1tmp, cnt1_neg);
+      b(STR1_NEXT_LAST_CHECK);
+    BIND(STR1_NEXT_LAST); // Loop through both strings in last bytes
+      (this->*str1_load_1chr)(ch1, Address(str1, cnt1tmp));
+      (this->*str2_load_1chr)(ch2, Address(str2, cnt2tmp));
+      cmp(ch1, ch2);
+      br(NE, NOMATCH);
+    BIND(STR1_NEXT_LAST); // Next bytes
+      adds(cnt1tmp, cnt1tmp, str1_chr_size);
+      add(cnt2tmp, cnt2tmp, str2_chr_size);
+      br(LT, STR1_NEXT_LAST);
+      add(cnt2_neg, cnt2_neg, tmp6, LSR, 3);
+      b(MATCH);
 
-    if ((icnt1 == -1 && str1_isL == str2_isL) || icnt1 == 2) {
-      Label CH1_LOOP;
-
-      BIND(DO2);
-        (this->*load_2chr)(ch1, str1);
-        if (icnt1 == 2) {
-          sub(result_tmp, cnt2, 2);
-        }
-        lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
-        sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
-      BIND(CH1_LOOP);
-        (this->*load_2chr)(ch2, Address(str2, cnt2_neg));
-        cmp(ch1, ch2);
-        br(EQ, MATCH);
-        adds(cnt2_neg, cnt2_neg, str2_chr_size);
-        br(LE, CH1_LOOP);
-        b(NOMATCH);
-    }
-
-    if ((icnt1 == -1 && str1_isL == str2_isL) || icnt1 == 3) {
-      Label FIRST_LOOP, STR2_NEXT, STR1_LOOP;
-
-      BIND(DO3);
-        (this->*load_2chr)(first, str1);
-        (this->*str1_load_1chr)(ch1, Address(str1, 2*str1_chr_size));
-        if (icnt1 == 3) {
-          sub(result_tmp, cnt2, 3);
-        }
-        lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
-        sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
-      BIND(FIRST_LOOP);
-        (this->*load_2chr)(ch2, Address(str2, cnt2_neg));
-        cmpw(first, ch2);
-        br(EQ, STR1_LOOP);
-      BIND(STR2_NEXT);
-        adds(cnt2_neg, cnt2_neg, str2_chr_size);
-        br(LE, FIRST_LOOP);
-        b(NOMATCH);
-
-      BIND(STR1_LOOP);
-        add(cnt2tmp, cnt2_neg, 2*str2_chr_size);
-        (this->*str2_load_1chr)(ch2, Address(str2, cnt2tmp));
-        cmp(ch1, ch2);
-        br(NE, STR2_NEXT);
-        b(MATCH);
-    }
-
-    if (icnt1 == -1 || icnt1 == 1) {
-      Label CH1_LOOP, HAS_ZERO, DO1_SHORT, DO1_LOOP;
-
-      BIND(DO1);
-        (this->*str1_load_1chr)(ch1, str1);
-        cmp(cnt2, (u1)8);
-        br(LT, DO1_SHORT);
-
-        sub(result_tmp, cnt2, 8/str2_chr_size);
-        sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
-        mov(tmp3, str2_isL ? 0x0101010101010101 : 0x0001000100010001);
-        lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
-
-        if (str2_isL) {
-          orr(ch1, ch1, ch1, LSL, 8);
-        }
-        orr(ch1, ch1, ch1, LSL, 16);
-        orr(ch1, ch1, ch1, LSL, 32);
-      BIND(CH1_LOOP);
-        ldr(ch2, Address(str2, cnt2_neg));
-        eor(ch2, ch1, ch2);
-        sub(tmp1, ch2, tmp3);
-        orr(tmp2, ch2, str2_isL ? 0x7f7f7f7f7f7f7f7f : 0x7fff7fff7fff7fff);
-        bics(tmp1, tmp1, tmp2);
-        br(NE, HAS_ZERO);
-        adds(cnt2_neg, cnt2_neg, 8);
-        br(LT, CH1_LOOP);
-
-        cmp(cnt2_neg, (u1)8);
-        mov(cnt2_neg, 0);
-        br(LT, CH1_LOOP);
-        b(NOMATCH);
-
-      BIND(HAS_ZERO);
-        rev(tmp1, tmp1);
-        clz(tmp1, tmp1);
-        add(cnt2_neg, cnt2_neg, tmp1, LSR, 3);
-        b(MATCH);
-
-      BIND(DO1_SHORT);
-        mov(result_tmp, cnt2);
-        lea(str2, Address(str2, cnt2, Address::lsl(str2_chr_shift)));
-        sub(cnt2_neg, zr, cnt2, LSL, str2_chr_shift);
-      BIND(DO1_LOOP);
-        (this->*str2_load_1chr)(ch2, Address(str2, cnt2_neg));
-        cmpw(ch1, ch2);
-        br(EQ, MATCH);
-        adds(cnt2_neg, cnt2_neg, str2_chr_size);
-        br(LT, DO1_LOOP);
+    BIND(DOSHORT);
+    if (str1_isL == str2_isL) {
+      cmp(cnt1, (u1)2);
+      br(LT, DO1);
+      br(GT, DO3);
     }
   }
+
+  if (icnt1 == 4) {
+    Label CH1_LOOP;
+
+      (this->*load_4chr)(ch1, str1);
+      sub(result_tmp, cnt2, 4);
+      lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
+      sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+
+    BIND(CH1_LOOP);
+      (this->*load_4chr)(ch2, Address(str2, cnt2_neg));
+      cmp(ch1, ch2);
+      br(EQ, MATCH);
+      adds(cnt2_neg, cnt2_neg, str2_chr_size);
+      br(LE, CH1_LOOP);
+      b(NOMATCH);
+    }
+
+  if ((icnt1 == -1 && str1_isL == str2_isL) || icnt1 == 2) {
+    Label CH1_LOOP;
+
+    BIND(DO2);
+      (this->*load_2chr)(ch1, str1);
+      if (icnt1 == 2) {
+        sub(result_tmp, cnt2, 2);
+      }
+      lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
+      sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+    BIND(CH1_LOOP);
+      (this->*load_2chr)(ch2, Address(str2, cnt2_neg));
+      cmp(ch1, ch2);
+      br(EQ, MATCH);
+      adds(cnt2_neg, cnt2_neg, str2_chr_size);
+      br(LE, CH1_LOOP);
+      b(NOMATCH);
+  }
+
+  if ((icnt1 == -1 && str1_isL == str2_isL) || icnt1 == 3) {
+    Label FIRST_LOOP, STR2_NEXT, STR1_LOOP;
+
+    BIND(DO3);
+      (this->*load_2chr)(first, str1);
+      (this->*str1_load_1chr)(ch1, Address(str1, 2*str1_chr_size));
+      if (icnt1 == 3) {
+        sub(result_tmp, cnt2, 3);
+      }
+      lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
+      sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+    BIND(FIRST_LOOP);
+      (this->*load_2chr)(ch2, Address(str2, cnt2_neg));
+      cmpw(first, ch2);
+      br(EQ, STR1_LOOP);
+    BIND(STR2_NEXT);
+      adds(cnt2_neg, cnt2_neg, str2_chr_size);
+      br(LE, FIRST_LOOP);
+      b(NOMATCH);
+
+    BIND(STR1_LOOP);
+      add(cnt2tmp, cnt2_neg, 2*str2_chr_size);
+      (this->*str2_load_1chr)(ch2, Address(str2, cnt2tmp));
+      cmp(ch1, ch2);
+      br(NE, STR2_NEXT);
+      b(MATCH);
+  }
+
+  if (icnt1 == -1 || icnt1 == 1) {
+    Label CH1_LOOP, HAS_ZERO, DO1_SHORT, DO1_LOOP;
+
+    BIND(DO1);
+      (this->*str1_load_1chr)(ch1, str1);
+      cmp(cnt2, (u1)8);
+      br(LT, DO1_SHORT);
+
+      sub(result_tmp, cnt2, 8/str2_chr_size);
+      sub(cnt2_neg, zr, result_tmp, LSL, str2_chr_shift);
+      mov(tmp3, str2_isL ? 0x0101010101010101 : 0x0001000100010001);
+      lea(str2, Address(str2, result_tmp, Address::lsl(str2_chr_shift)));
+
+      if (str2_isL) {
+        orr(ch1, ch1, ch1, LSL, 8);
+      }
+      orr(ch1, ch1, ch1, LSL, 16);
+      orr(ch1, ch1, ch1, LSL, 32);
+    BIND(CH1_LOOP);
+      ldr(ch2, Address(str2, cnt2_neg));
+      eor(ch2, ch1, ch2);
+      sub(tmp1, ch2, tmp3);
+      orr(tmp2, ch2, str2_isL ? 0x7f7f7f7f7f7f7f7f : 0x7fff7fff7fff7fff);
+      bics(tmp1, tmp1, tmp2);
+      br(NE, HAS_ZERO);
+      adds(cnt2_neg, cnt2_neg, 8);
+      br(LT, CH1_LOOP);
+
+      cmp(cnt2_neg, (u1)8);
+      mov(cnt2_neg, 0);
+      br(LT, CH1_LOOP);
+      b(NOMATCH);
+
+    BIND(HAS_ZERO);
+      rev(tmp1, tmp1);
+      clz(tmp1, tmp1);
+      add(cnt2_neg, cnt2_neg, tmp1, LSR, 3);
+      b(MATCH);
+
+    BIND(DO1_SHORT);
+      mov(result_tmp, cnt2);
+      lea(str2, Address(str2, cnt2, Address::lsl(str2_chr_shift)));
+      sub(cnt2_neg, zr, cnt2, LSL, str2_chr_shift);
+    BIND(DO1_LOOP);
+      (this->*str2_load_1chr)(ch2, Address(str2, cnt2_neg));
+      cmpw(ch1, ch2);
+      br(EQ, MATCH);
+      adds(cnt2_neg, cnt2_neg, str2_chr_size);
+      br(LT, DO1_LOOP);
+  }
+//  }
   BIND(NOMATCH);
     mov(result, -1);
     b(DONE);
