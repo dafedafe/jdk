@@ -591,7 +591,7 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
       (this->*str2_load_1chr)(ch2, Address(str2, cnt2tmp));
       cmp(ch1, ch2);
       br(NE, NOMATCH);
-    BIND(STR1_NEXT_LAST); // Next bytes
+    BIND(STR1_NEXT_LAST_CHECK); // Next bytes
       adds(cnt1tmp, cnt1tmp, str1_chr_size);
       add(cnt2tmp, cnt2tmp, str2_chr_size);
       br(LT, STR1_NEXT_LAST);
