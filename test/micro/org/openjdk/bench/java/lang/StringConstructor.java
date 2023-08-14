@@ -26,6 +26,7 @@ package micro.org.openjdk.bench.java.lang;
 import org.openjdk.jmh.annotations.*;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -44,12 +45,38 @@ public class StringConstructor {
   public int offset;
   private byte[] array;
 
+  private char[] chars;
+  private char[] charsMixedAtStart;
+  private char[] charsMixedAtMiddle;
+  private int[] codePointsMixedAtStart;
+  private int[] codePointsMixedAtMiddle;
+
+  private static char INTEROBANG = 0x2030;
+
   @Setup
   public void setup() {
       if (offset > size) {
         offset = size;
       }
-      array = "a".repeat(size).getBytes(StandardCharsets.UTF_8);
+      String s = "a".repeat(size);
+      array = s.getBytes(StandardCharsets.UTF_8);
+      chars = s.toCharArray();
+      charsMixedAtStart = Arrays.copyOf(chars, array.length);
+      charsMixedAtStart[0] = INTEROBANG;
+      charsMixedAtMiddle = Arrays.copyOf(chars, array.length);
+      charsMixedAtMiddle[charsMixedAtMiddle.length/2] = INTEROBANG;
+
+      codePointsMixedAtStart = intCopyOfChars(chars, array.length);
+      codePointsMixedAtStart[0] = INTEROBANG;
+      codePointsMixedAtMiddle = intCopyOfChars(chars, array.length);
+      codePointsMixedAtMiddle[codePointsMixedAtMiddle.length/2] = INTEROBANG;
+  }
+
+  private static int[] intCopyOfChars(char[] chars, int newLength) {
+      int[] res = new int[newLength];
+      for (int i = 0; i < Math.min(chars.length, newLength); i++)
+          res[i] = (int)chars[i];
+      return res;
   }
 
   @Benchmark
@@ -58,23 +85,48 @@ public class StringConstructor {
   }
 
   @Benchmark
-  public String newStringFromArrayWithCharset() {
+  public String newStringFromRangedArray() {
+      return new String(array, offset, array.length - offset);
+  }
+
+  @Benchmark
+  public String newStringFromArrayWithCharsetUTF8() {
       return new String(array, StandardCharsets.UTF_8);
   }
 
   @Benchmark
-  public String newStringFromArrayWithCharsetName() throws Exception {
+  public String newStringFromArrayWithCharsetNameUTF8() throws Exception {
       return new String(array, StandardCharsets.UTF_8.name());
   }
 
   @Benchmark
-  public String newStringFromRangedArray() {
-    return new String(array, offset, array.length - offset);
+  public String newStringFromRangedArrayWithCharsetUTF8() {
+      return new String(array, offset, array.length - offset, StandardCharsets.UTF_8);
   }
 
   @Benchmark
-  public String newStringFromRangedArrayWithCharset() {
-      return new String(array, offset, array.length - offset, StandardCharsets.UTF_8);
+  public String newStringFromRangedCharLatin1() {
+      return new String(chars, offset, chars.length - offset);
+  }
+
+  @Benchmark
+  public String newStringFromRangedCharMixedAtStart() {
+      return new String(charsMixedAtStart, 0, charsMixedAtStart.length);
+  }
+
+  @Benchmark
+  public String newStringFromRangedCharMixedAtMiddle() {
+      return new String(charsMixedAtMiddle, offset, charsMixedAtMiddle.length - offset);
+  }
+
+  @Benchmark
+  public String newStringFromRangedCodePointMixedAtStart() {
+      return new String(codePointsMixedAtStart, 0, codePointsMixedAtStart.length);
+  }
+
+  @Benchmark
+  public String newStringFromRangedCodePointMixedAtMiddle() {
+      return new String(codePointsMixedAtMiddle, offset, codePointsMixedAtMiddle.length - offset);
   }
 
 }

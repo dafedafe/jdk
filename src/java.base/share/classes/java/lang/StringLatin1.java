@@ -33,6 +33,7 @@ import java.util.function.IntConsumer;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import jdk.internal.util.ArraysSupport;
+import jdk.internal.vm.annotation.ForceInline;
 import jdk.internal.vm.annotation.IntrinsicCandidate;
 
 import static java.lang.String.LATIN1;
@@ -47,6 +48,7 @@ final class StringLatin1 {
         return (char)(value[index] & 0xff);
     }
 
+    @ForceInline
     public static boolean canEncode(int cp) {
         return cp >>> 8 == 0;
     }

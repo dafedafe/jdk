@@ -8484,7 +8484,7 @@ void MacroAssembler::crc32c_ipl_alg2_alt2(Register in_out, Register in1, Registe
 //     for (int i = 0; i < len; i++) {
 //       int c = src[srcOff++];
 //       if (c >>> 8 != 0) {
-//         return 0;
+//         return i;
 //       }
 //       dst[dstOff++] = (byte)c;
 //     }
@@ -8494,7 +8494,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
   XMMRegister tmp1Reg, XMMRegister tmp2Reg,
   XMMRegister tmp3Reg, XMMRegister tmp4Reg,
   Register tmp5, Register result, KRegister mask1, KRegister mask2) {
-  Label copy_chars_loop, return_length, return_zero, done;
+  Label copy_chars_loop, return_length, return_index, done;
 
   // rsi: src
   // rdi: dst
@@ -8550,7 +8550,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
     evmovdquw(tmp1Reg, mask2, Address(src, 0), /*merge*/ false, Assembler::AVX_512bit);
     evpcmpw(mask1, mask2, tmp1Reg, tmp2Reg, Assembler::le, /*signed*/ false, Assembler::AVX_512bit);
     ktestd(mask1, mask2);
-    jcc(Assembler::carryClear, return_zero);
+    jcc(Assembler::carryClear, return_index);
 
     evpmovwb(Address(dst, 0), mask2, tmp1Reg, Assembler::AVX_512bit);
 
@@ -8575,7 +8575,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
     evmovdquw(tmp1Reg, Address(src, len, Address::times_2), Assembler::AVX_512bit);
     evpcmpuw(mask1, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
     kortestdl(mask1, mask1);
-    jcc(Assembler::carryClear, return_zero);
+    jcc(Assembler::carryClear, return_index);
 
     // All elements in current processed chunk are valid candidates for
     // compression. Write a truncated byte elements to the memory.
@@ -8600,7 +8600,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
     evmovdquw(tmp1Reg, mask2, Address(src, 0), /*merge*/ false, Assembler::AVX_512bit);
     evpcmpw(mask1, mask2, tmp1Reg, tmp2Reg, Assembler::le, /*signed*/ false, Assembler::AVX_512bit);
     ktestd(mask1, mask2);
-    jcc(Assembler::carryClear, return_zero);
+    jcc(Assembler::carryClear, return_index);
 
     evpmovwb(Address(dst, 0), mask2, tmp1Reg, Assembler::AVX_512bit);
     jmp(return_length);
@@ -8636,7 +8636,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
     movdqu(tmp3Reg, Address(src, len, Address::times_2, 16)); // load next 8 characters
     por(tmp4Reg, tmp3Reg);
     ptest(tmp4Reg, tmp1Reg);       // check for Unicode chars in next vector
-    jcc(Assembler::notZero, return_zero);
+    jcc(Assembler::notZero, return_index);
     packuswb(tmp2Reg, tmp3Reg);    // only ASCII chars; compress each to 1 byte
     movdqu(Address(dst, len, Address::times_1), tmp2Reg);
     addptr(len, 16);
@@ -8656,7 +8656,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
 
     movdqu(tmp2Reg, Address(src, 0));
     ptest(tmp2Reg, tmp1Reg);       // check for Unicode chars in vector
-    jccb(Assembler::notZero, return_zero);
+    jccb(Assembler::notZero, return_index);
     packuswb(tmp2Reg, tmp3Reg);    // only LATIN1 chars; compress each to 1 byte
     movq(Address(dst, 0), tmp2Reg);
     addptr(src, 16);
@@ -8675,7 +8675,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
   bind(copy_chars_loop);
   load_unsigned_short(result, Address(src, len, Address::times_2));
   testl(result, 0xff00);      // check if Unicode char
-  jccb(Assembler::notZero, return_zero);
+  jccb(Assembler::notZero, return_index);
   movb(Address(dst, len, Address::times_1), result);  // ASCII char; compress to 1 byte
   increment(len);
   jcc(Assembler::notZero, copy_chars_loop);
@@ -8685,10 +8685,17 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
   pop(result);
   jmpb(done);
 
-  // if compression failed, return 0
-  bind(return_zero);
-  xorl(result, result);
-  addptr(rsp, wordSize);
+  // if compression failed, return index
+  bind(return_index);
+  movl(result, len);
+  load_unsigned_short(src, Address(src, result, Address::times_2));
+  testl(src, 0xff00);      // check if Unicode char
+  jccb(Assembler::notZero, done);
+  increment(result);
+  jcc(Assembler::notZero, return_index);
+
+//  xorl(result, result);
+//  addptr(rsp, wordSize);
 
   bind(done);
 }
