@@ -8494,7 +8494,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
   XMMRegister tmp1Reg, XMMRegister tmp2Reg,
   XMMRegister tmp3Reg, XMMRegister tmp4Reg,
   Register tmp5, Register result, KRegister mask1, KRegister mask2) {
-  Label copy_chars_loop, return_length, return_index, done;
+  Label copy_chars_loop, return_length, done, reset_sp, copy_tail;
 
   // rsi: src
   // rdi: dst
