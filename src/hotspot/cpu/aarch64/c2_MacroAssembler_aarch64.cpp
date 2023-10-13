@@ -250,7 +250,7 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
                                        Register tmp5, Register tmp6,
                                        int icnt1, Register result, int ae) {
   // NOTE: tmp5, tmp6 can be zr depending on specific method version
-  Label LINEARSEARCH, LINEARSTUB, LINEAR_MEDIUM, DONE, NOMATCH, MATCH;
+  Label DONE, NOMATCH, MATCH, DO1, DO2, DO3;;
 
   Register ch1 = rscratch1;
   Register ch2 = rscratch2;
@@ -282,245 +282,18 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
   // We have two strings, a source string in str2, cnt2 and a pattern string
   // in str1, cnt1. Find the 1st occurrence of pattern in source or return -1.
 
-  // For larger pattern and source we use a simplified Boyer Moore algorithm.
-  // With a small pattern and source we use linear scan.
-
-  if (icnt1 == -1) {
-    sub(result_tmp, cnt2, cnt1);
-    cmp(cnt1, (u1)8);             // Use Linear Scan if cnt1 < 8 || cnt1 >= 256
-    br(LT, LINEARSEARCH);
-    dup(v0, T16B, cnt1); // done in separate FPU pipeline. Almost no penalty
-    subs(zr, cnt1, 256);
-    lsr(tmp1, cnt2, 2);
-    ccmp(cnt1, tmp1, 0b0000, LT); // Source must be 4 * pattern for BM
-    br(GE, LINEARSTUB);
-  }
-
-// The Boyer Moore alogorithm is based on the description here:-
-//
-// http://en.wikipedia.org/wiki/Boyer%E2%80%93Moore_string_search_algorithm
-//
-// This describes and algorithm with 2 shift rules. The 'Bad Character' rule
-// and the 'Good Suffix' rule.
-//
-// These rules are essentially heuristics for how far we can shift the
-// pattern along the search string.
-//
-// The implementation here uses the 'Bad Character' rule only because of the
-// complexity of initialisation for the 'Good Suffix' rule.
-//
-// This is also known as the Boyer-Moore-Horspool algorithm:-
-//
-// http://en.wikipedia.org/wiki/Boyer-Moore-Horspool_algorithm
-//
-// This particular implementation has few java-specific optimizations.
-//
-// #define ASIZE 256
-//
-//    int bm(unsigned char *x, int m, unsigned char *y, int n) {
-//       int i, j;
-//       unsigned c;
-//       unsigned char bc[ASIZE];
-//
-//       /* Preprocessing */
-//       for (i = 0; i < ASIZE; ++i)
-//          bc[i] = m;
-//       for (i = 0; i < m - 1; ) {
-//          c = x[i];
-//          ++i;
-//          // c < 256 for Latin1 string, so, no need for branch
-//          #ifdef PATTERN_STRING_IS_LATIN1
-//          bc[c] = m - i;
-//          #else
-//          if (c < ASIZE) bc[c] = m - i;
-//          #endif
-//       }
-//
-//       /* Searching */
-//       j = 0;
-//       while (j <= n - m) {
-//          c = y[i+j];
-//          if (x[m-1] == c)
-//            for (i = m - 2; i >= 0 && x[i] == y[i + j]; --i);
-//          if (i < 0) return j;
-//          // c < 256 for Latin1 string, so, no need for branch
-//          #ifdef SOURCE_STRING_IS_LATIN1
-//          // LL case: (c< 256) always true. Remove branch
-//          j += bc[y[j+m-1]];
-//          #endif
-//          #ifndef PATTERN_STRING_IS_UTF
-//          // UU case: need if (c<ASIZE) check. Skip 1 character if not.
-//          if (c < ASIZE)
-//            j += bc[y[j+m-1]];
-//          else
-//            j += 1
-//          #endif
-//          #ifdef PATTERN_IS_LATIN1_AND_SOURCE_IS_UTF
-//          // UL case: need if (c<ASIZE) check. Skip <pattern length> if not.
-//          if (c < ASIZE)
-//            j += bc[y[j+m-1]];
-//          else
-//            j += m
-//          #endif
-//       }
-//    }
-
-  if (icnt1 == -1) {
-    Label BCLOOP, BCSKIP, BMLOOPSTR2, BMLOOPSTR1, BMSKIP, BMADV, BMMATCH,
-        BMLOOPSTR1_LASTCMP, BMLOOPSTR1_CMP, BMLOOPSTR1_AFTER_LOAD, BM_INIT_LOOP;
-    Register cnt1end = tmp2;
-    Register str2end = cnt2;
-    Register skipch = tmp2;
-
-    // str1 length is >=8, so, we can read at least 1 register for cases when
-    // UTF->Latin1 conversion is not needed(8 LL or 4UU) and half register for
-    // UL case. We'll re-read last character in inner pre-loop code to have
-    // single outer pre-loop load
-    const int firstStep = isL ? 7 : 3;
-
-    const int ASIZE = 256;
-    const int STORED_BYTES = 32; // amount of bytes stored per instruction
-    sub(sp, sp, ASIZE);
-    mov(tmp5, ASIZE/STORED_BYTES); // loop iterations
-    mov(ch1, sp);
-    BIND(BM_INIT_LOOP);
-      stpq(v0, v0, Address(post(ch1, STORED_BYTES)));
-      subs(tmp5, tmp5, 1);
-      br(GT, BM_INIT_LOOP);
-
-      sub(cnt1tmp, cnt1, 1);
-      mov(tmp5, str2);
-      add(str2end, str2, result_tmp, LSL, str2_chr_shift);
-      sub(ch2, cnt1, 1);
-      mov(tmp3, str1);
-    BIND(BCLOOP);
-      (this->*str1_load_1chr)(ch1, Address(post(tmp3, str1_chr_size)));
-      if (!str1_isL) {
-        subs(zr, ch1, ASIZE);
-        br(HS, BCSKIP);
-      }
-      strb(ch2, Address(sp, ch1));
-    BIND(BCSKIP);
-      subs(ch2, ch2, 1);
-      br(GT, BCLOOP);
-
-      add(tmp6, str1, cnt1, LSL, str1_chr_shift); // address after str1
-      if (str1_isL == str2_isL) {
-        // load last 8 bytes (8LL/4UU symbols)
-        ldr(tmp6, Address(tmp6, -wordSize));
-      } else {
-        ldrw(tmp6, Address(tmp6, -wordSize/2)); // load last 4 bytes(4 symbols)
-        // convert Latin1 to UTF. We'll have to wait until load completed, but
-        // it's still faster than per-character loads+checks
-        lsr(tmp3, tmp6, BitsPerByte * (wordSize/2 - str1_chr_size)); // str1[N-1]
-        ubfx(ch1, tmp6, 8, 8); // str1[N-2]
-        ubfx(ch2, tmp6, 16, 8); // str1[N-3]
-        andr(tmp6, tmp6, 0xFF); // str1[N-4]
-        orr(ch2, ch1, ch2, LSL, 16);
-        orr(tmp6, tmp6, tmp3, LSL, 48);
-        orr(tmp6, tmp6, ch2, LSL, 16);
-      }
-    BIND(BMLOOPSTR2);
-      (this->*str2_load_1chr)(skipch, Address(str2, cnt1tmp, Address::lsl(str2_chr_shift)));
-      sub(cnt1tmp, cnt1tmp, firstStep); // cnt1tmp is positive here, because cnt1 >= 8
-      if (str1_isL == str2_isL) {
-        // re-init tmp3. It's for free because it's executed in parallel with
-        // load above. Alternative is to initialize it before loop, but it'll
-        // affect performance on in-order systems with 2 or more ld/st pipelines
-        lsr(tmp3, tmp6, BitsPerByte * (wordSize - str1_chr_size));
-      }
-      if (!isL) { // UU/UL case
-        lsl(ch2, cnt1tmp, 1); // offset in bytes
-      }
-      cmp(tmp3, skipch);
-      br(NE, BMSKIP);
-      ldr(ch2, Address(str2, isL ? cnt1tmp : ch2));
-      mov(ch1, tmp6);
-      if (isL) {
-        b(BMLOOPSTR1_AFTER_LOAD);
-      } else {
-        sub(cnt1tmp, cnt1tmp, 1); // no need to branch for UU/UL case. cnt1 >= 8
-        b(BMLOOPSTR1_CMP);
-      }
-    BIND(BMLOOPSTR1);
-      (this->*str1_load_1chr)(ch1, Address(str1, cnt1tmp, Address::lsl(str1_chr_shift)));
-      (this->*str2_load_1chr)(ch2, Address(str2, cnt1tmp, Address::lsl(str2_chr_shift)));
-    BIND(BMLOOPSTR1_AFTER_LOAD);
-      subs(cnt1tmp, cnt1tmp, 1);
-      br(LT, BMLOOPSTR1_LASTCMP);
-    BIND(BMLOOPSTR1_CMP);
-      cmp(ch1, ch2);
-      br(EQ, BMLOOPSTR1);
-    BIND(BMSKIP);
-      if (!isL) {
-        // if we've met UTF symbol while searching Latin1 pattern, then we can
-        // skip cnt1 symbols
-        if (str1_isL != str2_isL) {
-          mov(result_tmp, cnt1);
-        } else {
-          mov(result_tmp, 1);
-        }
-        subs(zr, skipch, ASIZE);
-        br(HS, BMADV);
-      }
-      ldrb(result_tmp, Address(sp, skipch)); // load skip distance
-    BIND(BMADV);
-      sub(cnt1tmp, cnt1, 1);
-      add(str2, str2, result_tmp, LSL, str2_chr_shift);
-      cmp(str2, str2end);
-      br(LE, BMLOOPSTR2);
-      add(sp, sp, ASIZE);
-      b(NOMATCH);
-    BIND(BMLOOPSTR1_LASTCMP);
-      cmp(ch1, ch2);
-      br(NE, BMSKIP);
-    BIND(BMMATCH);
-      sub(result, str2, tmp5);
-      if (!str2_isL) lsr(result, result, 1);
-      add(sp, sp, ASIZE);
-      b(DONE);
-
-    BIND(LINEARSTUB);
-    cmp(cnt1, (u1)16); // small patterns still should be handled by simple algorithm
-    br(LT, LINEAR_MEDIUM);
-    mov(result, zr);
-    RuntimeAddress stub = NULL;
-    if (isL) {
-      stub = RuntimeAddress(StubRoutines::aarch64::string_indexof_linear_ll());
-      assert(stub.target() != NULL, "string_indexof_linear_ll stub has not been generated");
-    } else if (str1_isL) {
-      stub = RuntimeAddress(StubRoutines::aarch64::string_indexof_linear_ul());
-       assert(stub.target() != NULL, "string_indexof_linear_ul stub has not been generated");
-    } else {
-      stub = RuntimeAddress(StubRoutines::aarch64::string_indexof_linear_uu());
-      assert(stub.target() != NULL, "string_indexof_linear_uu stub has not been generated");
-    }
-    address call = trampoline_call(stub);
-    if (call == nullptr) {
-      DEBUG_ONLY(reset_labels(LINEARSEARCH, LINEAR_MEDIUM, DONE, NOMATCH, MATCH));
-      ciEnv::current()->record_failure("CodeCache is full");
-      return;
-    }
-    b(DONE);
-  }
-
-  BIND(LINEARSEARCH);
-  {
-  Label DO1, DO2, DO3;
-
-    Register str2tmp = tmp2;
+  Register str2tmp = tmp2;
   Register first = tmp3;
 
   if (icnt1 == -1)
   {
-      Label DOSHORT, FIRST_LOOP, STR2_NEXT, STR1_LOOP, STR1_NEXT, STR2_LAST,
+    Label DOSHORT, FIRST_LOOP, STR2_NEXT, STR1_LOOP, STR1_NEXT, STR2_LAST,
         STR1_NEXT_CHECK, STR1_LOOP_EXACT_NEXT, STR1_LOOP_NEXT, STR1_NEXT_LAST,
         STR1_LOOP_EXACT_LAST, STR1_NEXT_LAST_CHECK;
 
       sub(result_tmp, cnt2, cnt1);
       cmp(cnt1, u1(str1_isL == str2_isL ? 4 : 2));
       br(LT, DOSHORT);
-      BIND(LINEAR_MEDIUM);
       (this->*str1_load_1chr)(first, Address(str1));
 
       if (str2_isL) {
@@ -536,7 +309,7 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
       sub(cnt2_neg, cnt2_neg, 8); // Subtract to compensate first add
     BIND(FIRST_LOOP); // Loop through haystack 8 bytes at a time
       adds(cnt2_neg, cnt2_neg, 8);
-      br(GE, STR2_NEXT);
+      br(GT, STR2_NEXT);
       ldr(ch2, Address(str2, cnt2_neg));
       eor(ch2, first, ch2);
       sub(tmp5, ch2, str2_isL ? 0x0101010101010101 : 0x0001000100010001);
@@ -567,7 +340,8 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
         rev16(tmp5, tmp5);
     BIND(STR1_LOOP_NEXT); // Find right byte
       clz(tmp6, tmp5);
-      add(cnt2tmp, cnt2_neg, tmp6, LSR, 3);
+      adds(cnt2tmp, cnt2_neg, tmp6, LSR, 3);
+      br(GT, NOMATCH);
       mov(cnt1tmp, cnt1_neg);
       b(STR1_NEXT_CHECK);
 
@@ -720,7 +494,6 @@ void C2_MacroAssembler::string_indexof(Register str2, Register str1,
       adds(cnt2_neg, cnt2_neg, str2_chr_size);
       br(LT, DO1_LOOP);
   }
-//  }
   BIND(NOMATCH);
     mov(result, -1);
     b(DONE);
