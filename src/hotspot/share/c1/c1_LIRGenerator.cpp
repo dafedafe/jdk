@@ -1365,9 +1365,8 @@ void LIRGenerator::do_isInterface(Intrinsic* x) {
   __ move(new LIR_Address(klass, in_bytes(Klass::modifier_flags_offset()), T_INT), modifiers);
 
   LIR_Opr mask = load_immediate(JVM_ACC_INTERFACE, T_INT);
-  LIR_Opr flag = new_register(T_INT);
-  __ logical_and(modifiers, mask, flag);
-  __ cmp(lir_cond_equal, flag, LIR_OprFact::intConst(0));
+  __ logical_and(modifiers, mask, modifiers);
+  __ cmp(lir_cond_equal, modifiers, LIR_OprFact::intConst(0));
   __ branch(lir_cond_equal, L_false->label());
   __ move(LIR_OprFact::intConst(1), result);
   __ branch(lir_cond_always, L_done->label());
@@ -1375,7 +1374,6 @@ void LIRGenerator::do_isInterface(Intrinsic* x) {
   __ branch_destination(L_false->label());
   __ move(LIR_OprFact::intConst(0), result);
   __ branch_destination(L_done->label());
-//  __ cmove(lir_cond_notEqual, LIR_OprFact::intConst(1), LIR_OprFact::intConst(0), result, T_BOOLEAN);
 }
 
 void LIRGenerator::do_getObjectSize(Intrinsic* x) {
