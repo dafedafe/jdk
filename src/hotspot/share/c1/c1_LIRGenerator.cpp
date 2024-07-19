@@ -1285,6 +1285,39 @@ void LIRGenerator::do_getClass(Intrinsic* x) {
               LIR_OprFact::address(new LIR_Address(temp, T_OBJECT)), result);
 }
 
+// java.lang.Class::isArray()
+void LIRGenerator::do_isArray(Intrinsic* x) {
+  assert(x->number_of_arguments() == 1, "wrong type");
+
+  LIRItem rcvr(x->argument_at(0), this);
+  rcvr.load_item();
+  LIR_Opr result = rlock_result(x);
+
+  CodeEmitInfo* info = nullptr;
+  if (x->needs_null_check()) {
+    info = state_for(x);
+  }
+
+  LabelObj* L_false = new LabelObj();
+  LabelObj* L_done = new LabelObj();
+
+  LIR_Opr klass = new_register(T_METADATA);
+  __ move(new LIR_Address(rcvr.result(), java_lang_Class::klass_offset(), T_ADDRESS), klass, info);
+  __ cmp(lir_cond_equal, klass, LIR_OprFact::metadataConst(0));
+  __ branch(lir_cond_equal, L_false->label());
+
+  LIR_Opr layout = new_register(T_INT);
+  __ move(new LIR_Address(klass, in_bytes(Klass::layout_helper_offset()), T_INT), layout);
+  __ cmp(lir_cond_greaterEqual, layout, LIR_OprFact::intConst(Klass::_lh_neutral_value));
+  __ branch(lir_cond_greaterEqual, L_false->label());
+  __ move(LIR_OprFact::intConst(1), result);
+  __ branch(lir_cond_always, L_done->label());
+
+  __ branch_destination(L_false->label());
+  __ move(LIR_OprFact::intConst(0), result);
+  __ branch_destination(L_done->label());
+}
+
 // java.lang.Class::isPrimitive()
 void LIRGenerator::do_isPrimitive(Intrinsic* x) {
   assert(x->number_of_arguments() == 1, "wrong type");
@@ -2957,6 +2990,7 @@ void LIRGenerator::do_Intrinsic(Intrinsic* x) {
 
   case vmIntrinsics::_Object_init:    do_RegisterFinalizer(x); break;
   case vmIntrinsics::_isInstance:     do_isInstance(x);    break;
+  case vmIntrinsics::_isArray:        do_isArray(x);      break;
   case vmIntrinsics::_isPrimitive:    do_isPrimitive(x);   break;
   case vmIntrinsics::_getModifiers:   do_getModifiers(x);  break;
   case vmIntrinsics::_getClass:       do_getClass(x);      break;
