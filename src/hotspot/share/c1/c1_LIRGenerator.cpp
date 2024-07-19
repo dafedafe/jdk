@@ -1340,6 +1340,44 @@ void LIRGenerator::do_getModifiers(Intrinsic* x) {
   __ move(new LIR_Address(klass, in_bytes(Klass::modifier_flags_offset()), T_INT), result);
 }
 
+// java.lang.Class::isInterface()
+void LIRGenerator::do_isInterface(Intrinsic* x) {
+  assert(x->number_of_arguments() == 1, "wrong type");
+
+  LIRItem receiver(x->argument_at(0), this);
+  receiver.load_item();
+  LIR_Opr result = rlock_result(x);
+
+  CodeEmitInfo* info = nullptr;
+  if (x->needs_null_check()) {
+    info = state_for(x);
+  }
+
+  LabelObj* L_false = new LabelObj();
+  LabelObj* L_done = new LabelObj();
+
+  LIR_Opr klass = new_register(T_METADATA);
+  __ move(new LIR_Address(receiver.result(), java_lang_Class::klass_offset(), T_ADDRESS), klass, info);
+  __ cmp(lir_cond_equal, klass, LIR_OprFact::metadataConst(0));
+  __ branch(lir_cond_equal, L_false->label());
+
+  LIR_Opr modifiers = new_register(T_INT);
+  __ move(new LIR_Address(klass, in_bytes(Klass::modifier_flags_offset()), T_INT), modifiers);
+
+  LIR_Opr mask = load_immediate(JVM_ACC_INTERFACE, T_INT);
+  LIR_Opr flag = new_register(T_INT);
+  __ logical_and(modifiers, mask, flag);
+  __ cmp(lir_cond_equal, flag, LIR_OprFact::intConst(0));
+  __ branch(lir_cond_equal, L_false->label());
+  __ move(LIR_OprFact::intConst(1), result);
+  __ branch(lir_cond_always, L_done->label());
+
+  __ branch_destination(L_false->label());
+  __ move(LIR_OprFact::intConst(0), result);
+  __ branch_destination(L_done->label());
+//  __ cmove(lir_cond_notEqual, LIR_OprFact::intConst(1), LIR_OprFact::intConst(0), result, T_BOOLEAN);
+}
+
 void LIRGenerator::do_getObjectSize(Intrinsic* x) {
   assert(x->number_of_arguments() == 3, "wrong type");
   LIR_Opr result_reg = rlock_result(x);
@@ -2958,6 +2996,7 @@ void LIRGenerator::do_Intrinsic(Intrinsic* x) {
   case vmIntrinsics::_Object_init:    do_RegisterFinalizer(x); break;
   case vmIntrinsics::_isInstance:     do_isInstance(x);    break;
   case vmIntrinsics::_isPrimitive:    do_isPrimitive(x);   break;
+  case vmIntrinsics::_isInterface:    do_isInterface(x);   break;
   case vmIntrinsics::_getModifiers:   do_getModifiers(x);  break;
   case vmIntrinsics::_getClass:       do_getClass(x);      break;
   case vmIntrinsics::_getObjectSize:  do_getObjectSize(x); break;
