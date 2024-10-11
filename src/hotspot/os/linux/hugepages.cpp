@@ -33,6 +33,7 @@
 #include "utilities/debug.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/ostream.hpp"
+#include "nmt/memTag.hpp"
 
 #include <dirent.h>
 
@@ -117,13 +118,24 @@ static os::PageSizes scan_hugepages() {
   if (dir != nullptr) {
     struct dirent *entry;
     size_t pagesize;
+    size_t pages;
     while ((entry = readdir(dir)) != nullptr) {
       if (entry->d_type == DT_DIR &&
           sscanf(entry->d_name, "hugepages-%zukB", &pagesize) == 1) {
         // The kernel is using kB, hotspot uses bytes
         // Add each found Large Page Size to page_sizes
         pagesize *= K;
-        pagesizes.add(pagesize);
+        // Check the available number of pages
+        pages = 0;
+        char* path = NEW_C_HEAP_ARRAY(char, strlen(sys_hugepages) + strlen(entry->d_name) + 1, mtInternal);
+        path[0] = '\0';
+        strcat(path, sys_hugepages);
+        strcat(path, "/");
+        strcat(path, entry->d_name);
+        read_number_file(path, &pages);
+        if (pages > 0) {
+          pagesizes.add(pagesize);
+        }
       }
     }
     closedir(dir);
