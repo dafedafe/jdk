@@ -50,7 +50,29 @@
  * @build vm.mlvm.meth.stress.compiler.i2c_c2i.Test
  * @run driver vm.mlvm.share.IndifiedClassesBuilder
  *
- * @run main/othervm/timeout=480 -XX:CompileCommand=MemLimit,*.*,0 vm.mlvm.meth.stress.compiler.i2c_c2i.Test
+ * @comment
+ * In debug builds, use an explicit larger MemLimit to avoid intermittent failures
+ * due to 1G default MemLimit being crossed.
+ * In non-debug builds, do not set MemLimit explicitly.
+ *
+ * @requires vm.debug
+ *
+ * @run main/othervm/timeout=480 -XX:CompileCommand=MemLimit,*.*,2G~crash vm.mlvm.meth.stress.compiler.i2c_c2i.Test
+ */
+
+/*
+ * @test
+ *
+ * @library /vmTestbase
+ *          /test/lib
+ *
+ * @comment build test class and indify classes
+ * @build vm.mlvm.meth.stress.compiler.i2c_c2i.Test
+ * @run driver vm.mlvm.share.IndifiedClassesBuilder
+ *
+ * @requires !vm.debug
+ *
+ * @run main/othervm/timeout=480 vm.mlvm.meth.stress.compiler.i2c_c2i.Test
  */
 
 package vm.mlvm.meth.stress.compiler.i2c_c2i;
@@ -134,6 +156,7 @@ public class Test extends MlvmTest {
 
         final Argument[] finalArgs = RandomArgumentsGen.createRandomArgs(true,
                 mhM.type());
+        System.out.println("SIZEEEEEE: " + finalArgs.length + ", 2: " + RandomArgumentsGen.createRandomArgs(true, mhB.type()).length);
 
         Thread[] threads = new Thread[THREADS];
         for (int t = 0; t < THREADS; t++) {
