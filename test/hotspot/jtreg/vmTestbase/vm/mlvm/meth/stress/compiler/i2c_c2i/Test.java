@@ -156,7 +156,6 @@ public class Test extends MlvmTest {
 
         final Argument[] finalArgs = RandomArgumentsGen.createRandomArgs(true,
                 mhM.type());
-        System.out.println("SIZEEEEEE: " + finalArgs.length + ", 2: " + RandomArgumentsGen.createRandomArgs(true, mhB.type()).length);
 
         Thread[] threads = new Thread[THREADS];
         for (int t = 0; t < THREADS; t++) {
