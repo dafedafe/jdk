@@ -57,7 +57,7 @@
  *
  * @requires vm.debug
  *
- * @run main/othervm/timeout=480 -XX:CompileCommand=MemLimit,*.*,2G~crash vm.mlvm.meth.stress.compiler.i2c_c2i.Test
+ * @run main/othervm/timeout=480 -XX:CompileCommand=MemLimit,*.*,2G~crash ${test.main.class}
  */
 
 /*
@@ -72,7 +72,7 @@
  *
  * @requires !vm.debug
  *
- * @run main/othervm/timeout=480 vm.mlvm.meth.stress.compiler.i2c_c2i.Test
+ * @run main/othervm/timeout=480 ${test.main.class}
  */
 
 package vm.mlvm.meth.stress.compiler.i2c_c2i;
