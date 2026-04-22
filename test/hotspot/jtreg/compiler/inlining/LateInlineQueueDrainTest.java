@@ -28,7 +28,7 @@
  * @modules jdk.incubator.vector
  * @run main/othervm -Xcomp
  *                   -XX:-IncrementalInlineVirtual -XX:-IncrementalInlineMH -XX:-UseInlineCaches
- *                   compiler.inlining.LateInlineQueueDrainTest vector
+ *                   ${test.main.class} vector
  */
 
 /*
@@ -39,9 +39,9 @@
  * @run main/othervm -Xcomp
  *                   -XX:-IncrementalInlineVirtual -XX:-IncrementalInlineMH -XX:-UseInlineCaches
  *                   -XX:LiveNodeCountInliningCutoff=50
- *                   -XX:CompileCommand=compileonly,compiler.inlining.LateInlineQueueDrainTest::nonVector*
- *                   -XX:CompileCommand=delayinline,compiler.inlining.LateInlineQueueDrainTest::lateInline*
- *                   compiler.inlining.LateInlineQueueDrainTest nonvector
+ *                   -XX:CompileCommand=compileonly,${test.main.class}::nonVector*
+ *                   -XX:CompileCommand=delayinline,${test.main.class}::lateInline*
+ *                   ${test.main.class} nonvector
  */
 
 package compiler.inlining;
